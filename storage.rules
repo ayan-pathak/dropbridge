@@ -1,0 +1,21 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    match /users/{uid}/{fileId} {
+      allow read, delete: if request.auth != null && request.auth.uid == uid;
+
+      // 200 MB ceiling. AES-GCM encrypts in one pass in memory, so this is a
+      // real constraint on the client, not just a billing guard. Raise it only
+      // alongside chunked encryption.
+      allow write: if request.auth != null
+                   && request.auth.uid == uid
+                   && request.resource.size < 200 * 1024 * 1024;
+    }
+
+    match /{allOther=**} {
+      allow read, write: if false;
+    }
+  }
+}

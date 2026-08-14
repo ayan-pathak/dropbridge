@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Dropbridge icon export</title>
+<style>
+  body { background:#111; color:#eee; font:15px/1.5 system-ui; display:grid; place-items:center;
+         min-height:100vh; margin:0; gap:1rem; text-align:center }
+  button { font:inherit; padding:.6rem 1.2rem; border-radius:999px; border:0; cursor:pointer }
+</style>
+<h1>Dropbridge icons</h1>
+<p>Generates the two PNGs the manifest needs.<br />Save both into <code>public/icons/</code>.</p>
+<button id="go">Download icon-192.png and icon-512.png</button>
+<script>
+  // Rasterising in the browser avoids adding sharp/canvas as a build dependency
+  // just to produce two static files.
+  document.getElementById('go').onclick = async () => {
+    const svg = await (await fetch('../public/icons/icon.svg')).text();
+    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    for (const size of [192, 512]) {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = size;
+      canvas.getContext('2d').drawImage(img, 0, 0, size, size);
+      const a = document.createElement('a');
+      a.download = `icon-${size}.png`;
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    URL.revokeObjectURL(url);
+  };
+</script>

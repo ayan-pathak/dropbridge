@@ -1,0 +1,44 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Everything is scoped under the owner's uid, so one rule covers the tree.
+    // No cross-user reads exist by construction, not by filtering.
+    match /users/{uid} {
+      allow read, write: if isOwner(uid);
+
+      match /files/{fileId} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && isValidFile();
+      }
+
+      // Pairing handshakes. Both halves are already authenticated as the same
+      // user; the ECDH exchange protects the key from the *server*, not from
+      // the account holder.
+      match /pairings/{pairingId} {
+        allow read, write: if isOwner(uid);
+      }
+    }
+  }
+
+  function isOwner(uid) {
+    return request.auth != null && request.auth.uid == uid;
+  }
+
+  // Metadata must stay opaque: reject any document that tries to store a
+  // plaintext filename alongside the ciphertext.
+  function isValidFile() {
+    let d = request.resource.data;
+    return d.keys().hasOnly([
+             'storagePath', 'meta', 'metaIv', 'contentIv',
+             'encSize', 'createdAt', 'expiresAt', 'keep'
+           ])
+           && d.meta is string
+           && d.metaIv is string
+           && d.contentIv is string
+           && d.encSize is int
+           && d.encSize > 0
+           && d.keep is bool;
+  }
+}

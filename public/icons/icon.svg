@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#0a0a0b"/>
+  <!-- Two shores, one span: the bridge is the product. -->
+  <circle cx="146" cy="150" r="34" fill="#f4f4f5"/>
+  <circle cx="366" cy="362" r="34" fill="#f4f4f5"/>
+  <path d="M146 184 L146 300 Q146 362 208 362 L366 362"
+        fill="none" stroke="#f4f4f5" stroke-width="26"
+        stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/>
+</svg>
