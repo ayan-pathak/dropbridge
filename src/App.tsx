@@ -156,11 +156,11 @@ function Workspace({ user, vaultKey }: { user: User; vaultKey: CryptoKey }) {
 }
 
 export default function App() {
-  const { user, loading } = useAuth();
+  const { user, loading, authError, clearAuthError } = useAuth();
   const { vaultKey, status, createVault, adoptKey } = useVaultKey();
 
   if (loading || status === 'loading') return <Splash />;
-  if (!user) return <AuthGate />;
+  if (!user) return <AuthGate redirectError={authError} onClearError={clearAuthError} />;
   if (!vaultKey) {
     return <VaultGate uid={user.uid} onCreate={createVault} onAdopt={adoptKey} />;
   }

@@ -48,7 +48,13 @@ break that app.
 
 In the [Firebase console](https://console.firebase.google.com):
 
-1. **Authentication → Sign-in method →** enable **Email/Password**
+1. **Authentication → Sign-in method →** enable **Google** *and*
+   **Email/Password**. Both, not either: Google is the fast path, and the
+   password is the way in on a laptop that blocks personal Google accounts in
+   the browser.
+   - Under **Authentication → Settings → Authorized domains**, confirm your
+     Hosting domain is listed. Sign-in fails with `auth/unauthorized-domain`
+     from anywhere that is not.
 2. **Firestore Database → Create database →** *Production mode*
 3. **Storage → Get started** — requires the **Blaze** plan. Any project created
    after 30 Oct 2024 must have a linked billing account to provision a bucket at
@@ -122,12 +128,22 @@ never vanish out from under metadata that still lists them.
 
 ## Using it
 
-**First device.** Sign up (do this on your phone — verification goes to your
-inbox), then choose **Start a new vault**.
+**First device.** Sign up on your phone — **Continue with Google**, or an email
+and password if you would rather not (verification goes to your inbox). Then
+choose **Start a new vault**.
 
-**Second device.** Sign in with the same email and password — no inbox access
-needed, which is the point on a work laptop. Choose **Pair with another device**,
-then on the phone tap **Add a device** and scan the QR.
+**Set a password too.** Whichever way you signed up, add a password to the
+account before you go near the laptop. Managed machines routinely block signing
+a personal Google account into the browser, and the password is what gets you in
+when they do — that is the whole reason both methods exist here.
+
+**Second device.** Sign in as the same account — no inbox access needed, which is
+the point on a work laptop. Choose **Pair with another device**, then on the
+phone tap **Add a device** and scan the QR.
+
+If the laptop blocks popups, Google sign-in falls back to a full-page redirect on
+its own. Should the redirect itself fail, the reason now comes back to the
+sign-in screen rather than dropping you there with no explanation.
 
 **Floating drop target.** On desktop Chrome or Edge, hit **Pop out**. That's a
 Document Picture-in-Picture window: a real always-on-top OS window rendering the

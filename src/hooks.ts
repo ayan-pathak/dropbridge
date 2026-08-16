@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { onAuthStateChanged, type User } from 'firebase/auth';
+import { getRedirectResult, onAuthStateChanged, type User } from 'firebase/auth';
 
 import { auth } from './lib/firebase';
+import { describeAuthError } from './lib/authError';
 import { generateVaultKey } from './lib/crypto';
 import { clearVaultKey, loadVaultKey, saveVaultKey } from './lib/keystore';
 import { watchFiles, type StoredFile } from './lib/files';
@@ -9,17 +10,48 @@ import { watchFiles, type StoredFile } from './lib/files';
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
 
-  useEffect(
-    () =>
-      onAuthStateChanged(auth, (next) => {
-        setUser(next);
-        setLoading(false);
-      }),
-    [],
-  );
+  useEffect(() => {
+    let live = true;
+    // A redirect sign-in finishes on the *next* page load, and getRedirectResult
+    // is the only place it reports having failed. Until it settles,
+    // onAuthStateChanged says null -- publishing that would flash the sign-in
+    // screen over a sign-in that is still landing, and drop the error entirely.
+    let redirectSettled = false;
+    let sawAuthState = false;
+    let current: User | null = null;
 
-  return { user, loading };
+    function publish() {
+      if (!live || !redirectSettled || !sawAuthState) return;
+      setUser(current);
+      setLoading(false);
+    }
+
+    const stop = onAuthStateChanged(auth, (next) => {
+      current = next;
+      sawAuthState = true;
+      publish();
+    });
+
+    void getRedirectResult(auth)
+      .catch((err: unknown) => {
+        if (live) setAuthError(describeAuthError(err));
+      })
+      .finally(() => {
+        redirectSettled = true;
+        publish();
+      });
+
+    return () => {
+      live = false;
+      stop();
+    };
+  }, []);
+
+  const clearAuthError = useCallback(() => setAuthError(null), []);
+
+  return { user, loading, authError, clearAuthError };
 }
 
 export type VaultStatus = 'loading' | 'missing' | 'ready';

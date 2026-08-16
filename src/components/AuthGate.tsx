@@ -9,6 +9,7 @@ import {
 } from 'firebase/auth';
 
 import { auth } from '../lib/firebase';
+import { describeAuthError, isDismissal, needsRedirect } from '../lib/authError';
 import Scatter from './Scatter';
 
 function GoogleMark() {
@@ -22,49 +23,53 @@ function GoogleMark() {
   );
 }
 
-export default function AuthGate() {
+export default function AuthGate({
+  redirectError = null,
+  onClearError,
+}: {
+  /** A redirect sign-in that failed on the previous page load, surfaced here. */
+  redirectError?: string | null;
+  onClearError?: () => void;
+}) {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function report(err: unknown) {
-    const code = (err as { code?: string }).code ?? '';
-    // Closing the popup is a decision, not a failure. Saying nothing is correct.
-    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return;
-    setError(
-      err instanceof Error ? err.message.replace(/^Firebase:\s*/, '') : String(err),
-    );
+  function clearErrors() {
+    setError(null);
+    onClearError?.();
   }
 
   async function withGoogle() {
     setBusy(true);
-    setError(null);
+    clearErrors();
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
     } catch (err) {
-      const code = (err as { code?: string }).code ?? '';
-      // Locked-down browsers and embedded webviews block popups outright;
-      // redirect is the flow that still works there.
-      if (
-        code === 'auth/popup-blocked' ||
-        code === 'auth/operation-not-supported-in-this-environment'
-      ) {
-        await signInWithRedirect(auth, provider);
-        return;
+      if (needsRedirect(err)) {
+        try {
+          await signInWithRedirect(auth, provider);
+          // The page is navigating away. Nothing after this runs, so `busy`
+          // stays set on purpose -- the buttons should not come back to life
+          // underneath a sign-in that is already leaving.
+          return;
+        } catch (redirectErr) {
+          setError(describeAuthError(redirectErr));
+        }
+      } else if (!isDismissal(err)) {
+        setError(describeAuthError(err));
       }
-      report(err);
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   }
 
   async function withPassword(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
-    setError(null);
+    clearErrors();
     try {
       if (mode === 'signup') {
         const credential = await createUserWithEmailAndPassword(auth, email, password);
@@ -73,11 +78,13 @@ export default function AuthGate() {
         await signInWithEmailAndPassword(auth, email, password);
       }
     } catch (err) {
-      report(err);
+      setError(describeAuthError(err));
     } finally {
       setBusy(false);
     }
   }
+
+  const shownError = error ?? redirectError;
 
   return (
     <>
@@ -131,14 +138,14 @@ export default function AuthGate() {
             </button>
           </form>
 
-          {error && <p className="error">{error}</p>}
+          {shownError && <p className="error">{shownError}</p>}
         </div>
 
         <button
           className="btn btn-quiet btn-sm"
           onClick={() => {
             setMode(mode === 'signin' ? 'signup' : 'signin');
-            setError(null);
+            clearErrors();
           }}
         >
           {mode === 'signin' ? 'No account yet?' : 'Already have an account?'}
