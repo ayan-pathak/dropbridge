@@ -233,6 +233,14 @@ body {
   min-height: 100%;
 }
 
+/* A fixed-position .scatter paints above static siblings, so if one is ever
+   nested inside the stage its vignette would wash out the content. Keep real
+   content above it regardless of where the scatter ends up in the tree. */
+.center-stage > *:not(.scatter) {
+  position: relative;
+  z-index: 1;
+}
+
 /* ---------- Scatter canvas ---------- */
 
 .scatter {
