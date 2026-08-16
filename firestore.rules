@@ -33,7 +33,7 @@ service cloud.firestore {
     return d.keys().hasOnly([
              'storagePath', 'meta', 'metaIv', 'contentIv',
              'encSize', 'createdAt', 'expiresAt', 'keep',
-             'uploadedBy', 'downloadedAt'
+             'uploadedBy', 'downloadedAt', 'thumb', 'thumbIv'
            ])
            && d.meta is string
            && d.metaIv is string

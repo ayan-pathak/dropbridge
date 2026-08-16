@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 import { deleteFile, downloadFile, setKeep, type StoredFile } from '../lib/files';
 import { expiryLabel, formatBytes, formatRelative } from '../lib/format';
+import { extensionOf } from '../lib/thumbnail';
 
 export default function FileList({
   uid,
@@ -39,49 +40,63 @@ export default function FileList({
     <>
       {error && <p className="error" style={{ marginBottom: '0.75rem' }}>{error}</p>}
       <div className="tiles">
-        {files.map((file) => (
-          <div className="tile" key={file.id} data-locked={file.undecryptable ?? false}>
-            <div className="tile-name" title={file.meta.name}>
-              {file.meta.name}
-            </div>
+        {files.map((file) => {
+          const busy = busyId === file.id;
+          return (
+            <article className="tile" key={file.id} data-locked={file.undecryptable ?? false}>
+              <div className="tile-preview">
+                {file.thumb ? (
+                  <img src={file.thumb} alt="" loading="lazy" />
+                ) : (
+                  <span className="tile-ext">
+                    {file.undecryptable ? 'locked' : extensionOf(file.meta.name)}
+                  </span>
+                )}
+              </div>
 
-            <div className="micro">
-              {file.undecryptable
-                ? 'Encrypted with a different key'
-                : `${formatBytes(file.meta.size)} · ${formatRelative(file.createdAt)}`}
-            </div>
-            <div className="micro">
-              {expiryLabel(file.expiresAt, file.keep, file.downloadedAt)}
-            </div>
+              <div className="tile-body">
+                <h3 className="tile-name" title={file.meta.name}>
+                  {file.meta.name}
+                </h3>
+                <p className="micro">
+                  {file.undecryptable
+                    ? 'Encrypted with a different key'
+                    : `${formatBytes(file.meta.size)} · ${formatRelative(file.createdAt)}`}
+                </p>
+                <p className="micro" data-armed={Boolean(file.downloadedAt)}>
+                  {expiryLabel(file.expiresAt, file.keep, file.downloadedAt)}
+                </p>
+              </div>
 
-            <div className="tile-actions">
-              <button
-                className="btn btn-ghost btn-sm"
-                disabled={busyId === file.id || file.undecryptable}
-                onClick={() => void run(file.id, () => downloadFile(uid, vaultKey, file))}
-              >
-                {busyId === file.id ? '…' : 'Download'}
-              </button>
-              {!file.undecryptable && (
+              <div className="tile-actions">
+                <button
+                  className="btn btn-primary btn-sm"
+                  disabled={busy || file.undecryptable}
+                  onClick={() => void run(file.id, () => downloadFile(uid, vaultKey, file))}
+                >
+                  {busy ? 'Working…' : 'Download'}
+                </button>
+                {!file.undecryptable && (
+                  <button
+                    className="btn btn-quiet btn-sm"
+                    disabled={busy}
+                    onClick={() => void run(file.id, () => setKeep(uid, file.id, !file.keep))}
+                    title={file.keep ? 'Let it expire again' : 'Exempt from auto-delete'}
+                  >
+                    {file.keep ? 'Unkeep' : 'Keep'}
+                  </button>
+                )}
                 <button
                   className="btn btn-quiet btn-sm"
-                  disabled={busyId === file.id}
-                  onClick={() => void run(file.id, () => setKeep(uid, file.id, !file.keep))}
-                  title={file.keep ? 'Let it expire again' : 'Exempt from auto-delete'}
+                  disabled={busy}
+                  onClick={() => void run(file.id, () => deleteFile(uid, file.id))}
                 >
-                  {file.keep ? 'Unkeep' : 'Keep'}
+                  Delete
                 </button>
-              )}
-              <button
-                className="btn btn-quiet btn-sm"
-                disabled={busyId === file.id}
-                onClick={() => void run(file.id, () => deleteFile(uid, file.id))}
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        ))}
+              </div>
+            </article>
+          );
+        })}
       </div>
     </>
   );
