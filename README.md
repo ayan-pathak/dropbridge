@@ -15,12 +15,18 @@ life is the wrong tool for "get this PDF onto my phone."
 ```
 Phone PWA                            Desktop web app
     │                                       │
-    └──────────► Firebase (GCP) ◄───────────┘
-                 Auth · Firestore · Cloud Storage
+    ├──────────► Firebase ◄─────────────────┤
+    │            Auth · Firestore           │
+    │                                       │
+    └──────────► Supabase ◄─────────────────┘
+                 Storage
 
-Firestore holds opaque metadata.  Storage holds ciphertext.
+Firestore holds opaque metadata.  Supabase holds ciphertext.
 The key never leaves your devices.
 ```
+
+Supabase authorises against the *Firebase* ID token via its third-party auth
+integration, so there is one login and no second account to manage.
 
 - **AES-GCM 256** encryption in the browser before upload. Firebase stores
   ciphertext and an opaque blob of encrypted metadata.
@@ -50,12 +56,28 @@ In the [Firebase console](https://console.firebase.google.com):
 
 1. **Authentication → Sign-in method →** enable **Email/Password**
 2. **Firestore Database → Create database →** *Production mode*
-3. **Storage → Get started** — requires the **Blaze** plan. Any project created
-   after 30 Oct 2024 must have a linked billing account to provision a bucket at
-   all; since 3 Feb 2026 that applies to maintaining one too. Free-tier
-   allowances still apply, so real-world cost here is ~$0.
-4. **Project settings → General → Your apps → Add app → Web**, and copy the
+3. **Project settings → General → Your apps → Add app → Web**, and copy the
    config values.
+
+Firebase Storage is deliberately unused — it requires the Blaze plan, and
+Supabase's free tier covers this app's needs without a billing account.
+
+### 1b. Supabase storage
+
+1. Create a project at [supabase.com](https://supabase.com) — no card required.
+2. **Storage → New bucket** → name it `files`, leave it **private**.
+3. **Authentication → Sign In / Providers → Third-Party Auth** → add **Firebase**
+   and enter your Firebase project ID.
+4. **SQL Editor** → paste `supabase-policies.sql` → Run.
+5. **Project Settings → API** → copy the URL and anon key into `.env`.
+
+The policies pin `aud` to your Firebase project ID for a reason: **Firebase
+signs every project's JWTs with the same global key set**, so without that check
+a token from any unrelated Firebase project would authorise against your bucket.
+
+Free tier is 1 GB of storage and 5 GB egress per month. Projects also **pause
+after 7 days of inactivity** and need a manual restore — invisible for daily
+use, annoying after a holiday.
 
 ### 2. Guard the bill
 
@@ -106,17 +128,21 @@ Firebase Hosting serves it over HTTPS on a real certificate, which is what makes
 the PWA installable — a self-signed cert on a LAN address will not work, because
 service workers refuse to register outside a secure context.
 
-### 6. Auto-delete (do this, or files live forever)
+### 6. Auto-delete
 
-Two independent reapers, because Firestore and Storage expire separately:
+**Firestore TTL** handles the metadata: Cloud console → Firestore →
+Time-to-live → add a policy on collection group `files`, field `expiresAt`.
 
-- **Firestore TTL:** Cloud console → Firestore → Time-to-live → add a policy on
-  collection group `files`, field `expiresAt`.
-- **Storage lifecycle:** Cloud console → Cloud Storage → your bucket →
-  Lifecycle → add rule: *delete object, age 8 days*.
+**Supabase Storage has no lifecycle rules**, so nothing currently reaps the
+objects themselves — a known gap. Options, in order of preference:
 
-Keep the storage rule slightly **longer** than `VITE_RETENTION_DAYS`, so blobs
-never vanish out from under metadata that still lists them.
+- A client-side sweep on app open, deleting anything past `expiresAt` using the
+  user's own credentials. No server, works today.
+- `pg_cron` plus an Edge Function, if you want it to happen whether or not the
+  app is opened.
+
+Until one of those exists, expired files disappear from the list but their
+encrypted bytes remain in the bucket, consuming quota.
 
 ---
 

@@ -11,14 +11,9 @@ import {
   Timestamp,
   type Unsubscribe,
 } from 'firebase/firestore';
-import {
-  deleteObject,
-  getBlob,
-  ref,
-  uploadBytesResumable,
-} from 'firebase/storage';
 
-import { db, storage } from './firebase';
+import { db } from './firebase';
+import { FILES_BUCKET, supabase } from './supabase';
 import { decrypt, decryptJson, encrypt, encryptJson, fromB64, randomIv, toB64 } from './crypto';
 
 const RETENTION_DAYS = Number(import.meta.env.VITE_RETENTION_DAYS ?? 7);
@@ -42,13 +37,17 @@ export interface StoredFile {
 }
 
 const filesCol = (uid: string) => collection(db, 'users', uid, 'files');
-const blobRef = (uid: string, fileId: string) => ref(storage, `users/${uid}/${fileId}`);
+
+/**
+ * First path segment must be the uid: the Supabase RLS policy authorises on
+ * `storage.foldername(name)[1]`, so the layout *is* the access control.
+ */
+const objectPath = (uid: string, fileId: string) => `${uid}/${fileId}`;
 
 export async function uploadFile(
   uid: string,
   vaultKey: CryptoKey,
   file: File,
-  onProgress?: (fraction: number) => void,
 ): Promise<string> {
   const fileId = crypto.randomUUID();
 
@@ -62,25 +61,21 @@ export async function uploadFile(
     size: file.size,
   } satisfies FileMeta);
 
-  const task = uploadBytesResumable(blobRef(uid, fileId), ciphertext, {
-    contentType: 'application/octet-stream',
-  });
+  const { error } = await supabase.storage
+    .from(FILES_BUCKET)
+    .upload(objectPath(uid, fileId), ciphertext, {
+      contentType: 'application/octet-stream',
+      upsert: false,
+    });
 
-  await new Promise<void>((resolve, reject) => {
-    task.on(
-      'state_changed',
-      (snap) => onProgress?.(snap.bytesTransferred / snap.totalBytes),
-      reject,
-      () => resolve(),
-    );
-  });
+  if (error) throw error;
 
   const expiresAt = new Date(Date.now() + RETENTION_DAYS * 86_400_000);
 
   // Metadata is written only after the blob lands, so the list never shows a
   // row whose bytes aren't there yet.
   await setDoc(doc(filesCol(uid), fileId), {
-    storagePath: `users/${uid}/${fileId}`,
+    storagePath: objectPath(uid, fileId),
     meta: meta.data,
     metaIv: meta.iv,
     contentIv: toB64(contentIv),
@@ -143,8 +138,14 @@ export async function downloadFile(
   vaultKey: CryptoKey,
   file: StoredFile,
 ): Promise<void> {
-  const encrypted = await getBlob(blobRef(uid, file.id));
-  const plain = await decrypt(vaultKey, fromB64(file.contentIv), await encrypted.arrayBuffer());
+  const { data, error } = await supabase.storage
+    .from(FILES_BUCKET)
+    .download(objectPath(uid, file.id));
+
+  if (error) throw error;
+  if (!data) throw new Error('File is missing from storage.');
+
+  const plain = await decrypt(vaultKey, fromB64(file.contentIv), await data.arrayBuffer());
   const blob = new Blob([plain], { type: file.meta.type || 'application/octet-stream' });
 
   const url = URL.createObjectURL(blob);
@@ -156,9 +157,9 @@ export async function downloadFile(
 }
 
 export async function deleteFile(uid: string, fileId: string): Promise<void> {
-  // Blob first: an orphaned metadata row is recoverable, an orphaned blob is
-  // an invisible object quietly billing you until the lifecycle rule catches it.
-  await deleteObject(blobRef(uid, fileId)).catch(() => undefined);
+  // Blob first: an orphaned metadata row is recoverable, an orphaned object is
+  // invisible and quietly consumes your storage quota.
+  await supabase.storage.from(FILES_BUCKET).remove([objectPath(uid, fileId)]);
   await deleteDoc(doc(filesCol(uid), fileId));
 }
 
