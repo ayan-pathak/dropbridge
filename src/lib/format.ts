@@ -17,10 +17,25 @@ export function formatRelative(date: Date | null): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
-export function expiryLabel(expiresAt: Date | null, keep: boolean): string {
+export function expiryLabel(
+  expiresAt: Date | null,
+  keep: boolean,
+  downloadedAt: Date | null,
+): string {
   if (keep) return 'Kept';
   if (!expiresAt) return '';
-  const days = Math.ceil((expiresAt.getTime() - Date.now()) / 86_400_000);
-  if (days <= 0) return 'Expiring';
-  return `${days}d left`;
+
+  const remaining = expiresAt.getTime() - Date.now();
+  if (remaining <= 0) return 'Deleting…';
+
+  // A delivered file is on a minutes-long fuse, so days would read as "1d left"
+  // right up until it vanishes. Say what is actually about to happen.
+  if (downloadedAt) {
+    const minutes = Math.ceil(remaining / 60_000);
+    return minutes < 60
+      ? `Delivered · gone in ${minutes}m`
+      : `Delivered · gone in ${Math.ceil(minutes / 60)}h`;
+  }
+
+  return `${Math.ceil(remaining / 86_400_000)}d left`;
 }

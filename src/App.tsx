@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { signOut, type User } from 'firebase/auth';
 
@@ -6,7 +6,7 @@ import { auth } from './lib/firebase';
 import { useAuth, useFiles, useVaultKey } from './hooks';
 import { isPipSupported, openPipWindow } from './lib/pip';
 import { takeSharedFiles } from './lib/sharedInbox';
-import { uploadFile } from './lib/files';
+import { sweepExpired, uploadFile } from './lib/files';
 
 import AuthGate from './components/AuthGate';
 import VaultGate from './components/VaultGate';
@@ -42,6 +42,19 @@ function Workspace({ user, vaultKey }: { user: User; vaultKey: CryptoKey }) {
       if (shared.length) setNotice(`Sent ${shared.length} file${shared.length > 1 ? 's' : ''}.`);
     })();
   }, [user.uid, vaultKey]);
+
+  // Deletion is client-driven, so it runs whenever the app is open rather than
+  // exactly on the deadline. Held in a ref so a new Firestore snapshot doesn't
+  // tear down and restart the timer on every change.
+  const filesRef = useRef(files);
+  filesRef.current = files;
+
+  useEffect(() => {
+    const run = () => void sweepExpired(user.uid, filesRef.current);
+    run();
+    const timer = setInterval(run, 60_000);
+    return () => clearInterval(timer);
+  }, [user.uid]);
 
   const visible = useMemo(() => {
     const term = search.trim().toLowerCase();

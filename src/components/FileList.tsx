@@ -50,7 +50,9 @@ export default function FileList({
                 ? 'Encrypted with a different key'
                 : `${formatBytes(file.meta.size)} · ${formatRelative(file.createdAt)}`}
             </div>
-            <div className="micro">{expiryLabel(file.expiresAt, file.keep)}</div>
+            <div className="micro">
+              {expiryLabel(file.expiresAt, file.keep, file.downloadedAt)}
+            </div>
 
             <div className="tile-actions">
               <button

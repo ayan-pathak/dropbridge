@@ -130,19 +130,30 @@ service workers refuse to register outside a secure context.
 
 ### 6. Auto-delete
 
-**Firestore TTL** handles the metadata: Cloud console → Firestore →
-Time-to-live → add a policy on collection group `files`, field `expiresAt`.
+A file has two possible lifetimes, whichever comes first:
 
-**Supabase Storage has no lifecycle rules**, so nothing currently reaps the
-objects themselves — a known gap. Options, in order of preference:
+- **Undelivered:** `VITE_RETENTION_DAYS`, default 7 days.
+- **Delivered:** `VITE_DELETE_AFTER_DOWNLOAD_MINUTES`, default 30 minutes,
+  starting the moment a *different* device downloads it. Re-downloading on the
+  device that uploaded it doesn't count — that isn't delivery. Files marked
+  **Keep** are exempt from both.
 
-- A client-side sweep on app open, deleting anything past `expiresAt` using the
-  user's own credentials. No server, works today.
-- `pg_cron` plus an Edge Function, if you want it to happen whether or not the
-  app is opened.
+A deadline can only ever move closer, never further out, so a later download by
+a third device can't extend the life of something already on its way out.
 
-Until one of those exists, expired files disappear from the list but their
-encrypted bytes remain in the bucket, consuming quota.
+**Enforcement is client-side.** The app sweeps on open and every 60 seconds
+while running. There is no server in this architecture, so "30 minutes" is a
+floor, not a ceiling: if no device opens the app for two days, deletion happens
+two days later. The bytes stay encrypted throughout, so the exposure is quota
+and retention, not confidentiality.
+
+Add **Firestore TTL** as a backstop for the metadata: Cloud console → Firestore
+→ Time-to-live → policy on collection group `files`, field `expiresAt`. Note it
+only reaps Firestore documents, not the Supabase objects, and Google's TTL
+sweep runs within ~24h of expiry rather than promptly.
+
+If you later want deletion that happens whether or not the app is open,
+Supabase's `pg_cron` plus an Edge Function can do it on the free tier.
 
 ---
 
