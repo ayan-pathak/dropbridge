@@ -166,9 +166,10 @@ Android share sheet, so you can push files back without opening it first.
 
 ## Notes and limits
 
-- **Files are encrypted whole, in memory.** The 200 MB cap in `storage.rules` is
-  a real client constraint, not just a billing guard. Raising it needs chunked
-  encryption first.
+- **Files are encrypted whole, in memory**, so very large files are a bad idea
+  regardless of what storage allows. The Supabase bucket also defaults to a
+  **50 MB per-file limit** (Storage → bucket → Settings). Raising either needs
+  chunked encryption first.
 - **Metadata still leaks shape:** file sizes, counts, timestamps, and IP
   addresses are visible to the server even though contents and names are not.
 - **The JS bundle is ~900 KB** (mostly the Firebase SDK). Code-splitting Auth

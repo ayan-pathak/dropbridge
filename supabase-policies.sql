@@ -10,6 +10,13 @@
 -- than `authenticated`. Policies therefore target both roles and rely on the
 -- claim checks rather than on the Postgres role.
 
+-- Dropped first so a partial previous run doesn't block a re-run. Postgres has
+-- no "create or replace policy", and a failed script leaves earlier statements
+-- committed.
+drop policy if exists "dropbridge: read own objects" on storage.objects;
+drop policy if exists "dropbridge: write own objects" on storage.objects;
+drop policy if exists "dropbridge: delete own objects" on storage.objects;
+
 create policy "dropbridge: read own objects"
 on storage.objects for select
 to anon, authenticated
