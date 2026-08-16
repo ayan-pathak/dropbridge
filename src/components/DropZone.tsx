@@ -8,6 +8,25 @@ interface Upload {
   progress: number;
 }
 
+/**
+ * Firebase Storage reports a missing bucket as a generic unknown/404, which
+ * reads as "the app is broken" rather than "this project isn't finished being
+ * set up". Name the actual cause instead.
+ */
+function describeUploadError(err: unknown): string {
+  const code = (err as { code?: string }).code ?? '';
+  if (code === 'storage/unknown' || code === 'storage/bucket-not-found') {
+    return 'File storage isn’t set up on this project yet, so uploads can’t be saved.';
+  }
+  if (code === 'storage/unauthorized') {
+    return 'Storage rules rejected this upload. Publish storage.rules and try again.';
+  }
+  if (code === 'storage/quota-exceeded') {
+    return 'Storage quota is full. Delete a few files and try again.';
+  }
+  return err instanceof Error ? err.message.replace(/^Firebase:\s*/, '') : String(err);
+}
+
 export default function DropZone({
   uid,
   vaultKey,
@@ -35,7 +54,7 @@ export default function DropZone({
           );
           setError(null);
         } catch (err) {
-          setError(err instanceof Error ? err.message : String(err));
+          setError(describeUploadError(err));
         } finally {
           setUploads((current) => current.filter((item) => item.id !== id));
         }
