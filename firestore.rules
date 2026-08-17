@@ -13,11 +13,6 @@ service cloud.firestore {
         allow create, update: if isOwner(uid) && isValidFile();
       }
 
-      match /notes/{noteId} {
-        allow read, delete: if isOwner(uid);
-        allow create, update: if isOwner(uid) && isValidNote();
-      }
-
       // Pairing handshakes. Both halves are already authenticated as the same
       // user; the ECDH exchange protects the key from the *server*, not from
       // the account holder.
@@ -29,17 +24,6 @@ service cloud.firestore {
 
   function isOwner(uid) {
     return request.auth != null && request.auth.uid == uid;
-  }
-
-  // Same contract as files: the note body is ciphertext, and the size cap keeps
-  // a clipboard from quietly becoming a document store on your bill.
-  function isValidNote() {
-    let d = request.resource.data;
-    return d.keys().hasOnly(['body', 'bodyIv', 'createdAt', 'expiresAt'])
-           && d.body is string
-           && d.bodyIv is string
-           && d.body.size() > 0
-           && d.body.size() < 20000;
   }
 
   // Metadata must stay opaque: reject any document that tries to store a

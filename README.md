@@ -15,11 +15,14 @@ life is the wrong tool for "get this PDF onto my phone."
 ```
 Phone PWA                            Desktop web app
     │                                       │
-    └──────────► Firebase (GCP) ◄───────────┘
-                 Auth · Firestore · Cloud Storage
+    ├──────────► Firebase (GCP) ◄───────────┤
+    │            Hosting · Auth · Firestore │
+    │                                       │
+    └──────────►   Supabase    ◄────────────┘
+                 Postgres (notes) · Storage
 
-Firestore holds opaque metadata.  Storage holds ciphertext.
-The key never leaves your devices.
+Firebase proves who you are.  Supabase and Firestore hold
+nothing but ciphertext.  The key never leaves your devices.
 ```
 
 - **AES-GCM 256** encryption in the browser before upload. Firebase stores
@@ -63,7 +66,41 @@ In the [Firebase console](https://console.firebase.google.com):
 4. **Project settings → General → Your apps → Add app → Web**, and copy the
    config values.
 
-### 2. Guard the bill
+### 2. Supabase (notes)
+
+Notes live in Postgres, reached with your **Firebase** identity — there is no
+second login.
+
+1. **Authentication → Third-Party Auth →** add an integration pointing at your
+   Firebase project ID.
+2. Apply the schema in `supabase/migrations/` (or run it in the SQL editor). It
+   creates `public.notes`, its RLS policies, and adds the table to the
+   `supabase_realtime` publication — realtime is what makes the other device
+   light up.
+3. Give your Firebase user the `role: 'authenticated'` custom claim. This is
+   not settable from the browser; see **Custom claims** below.
+4. **Project settings → Data API →** copy the URL and publishable key into
+   `.env`.
+
+The RLS policies read `auth.jwt() ->> 'sub'`, **not** `auth.uid()`. Firebase
+uids are 28-character strings and `auth.uid()` casts to `uuid`, so the usual
+example would fail every query with `invalid input syntax for type uuid`.
+
+#### Custom claims
+
+Supabase maps a JWT to the `authenticated` Postgres role via its `role` claim,
+and Firebase does not set one. Without it every request arrives as `anon` and
+RLS rejects it. Set it once per user with the Admin SDK and a service account
+key:
+
+```js
+import { getAuth } from 'firebase-admin/auth';
+await getAuth().setCustomUserClaims(uid, { role: 'authenticated' });
+```
+
+The token refreshes within the hour, or immediately on the next sign-in.
+
+### 3. Guard the bill
 
 Blaze has no hard spending cap — budgets *alert*, they do not stop. Do both of
 these before you deploy:
@@ -73,7 +110,7 @@ these before you deploy:
   then put the site key in `.env`. This is what stops anyone who finds your
   (inherently public) web API key from spending your money.
 
-### 3. Local
+### 4. Local
 
 ```bash
 cp .env.example .env
@@ -89,12 +126,12 @@ npm install
 npm run dev
 ```
 
-### 4. Icons
+### 5. Icons
 
 The manifest needs two PNGs that aren't in the repo. Open `tools/make-icons.html`
 in a browser, click the button, and save both files into `public/icons/`.
 
-### 5. Deploy
+### 6. Deploy
 
 ```bash
 npx firebase login
@@ -112,14 +149,14 @@ Firebase Hosting serves it over HTTPS on a real certificate, which is what makes
 the PWA installable — a self-signed cert on a LAN address will not work, because
 service workers refuse to register outside a secure context.
 
-### 6. Auto-delete (do this, or files live forever)
+### 7. Auto-delete (do this, or files live forever)
 
 Two independent reapers, because Firestore and Storage expire separately:
 
 - **Firestore TTL:** Cloud console → Firestore → Time-to-live → add a policy on
-  collection group `files`, field `expiresAt`, and a **second** policy on
-  collection group `notes`, same field. TTL policies are per collection group,
-  so the one on `files` does nothing for notes — miss it and notes never expire.
+  collection group `files`, field `expiresAt`.
+- **Notes** need no setup: Postgres has no TTL, so the app sweeps its own
+  expired rows on load and filters the rest out of the query.
 - **Storage lifecycle:** Cloud console → Cloud Storage → your bucket →
   Lifecycle → add rule: *delete object, age 8 days*.
 
@@ -147,9 +184,10 @@ If the laptop blocks popups, Google sign-in falls back to a full-page redirect o
 its own. Should the redirect itself fail, the reason now comes back to the
 sign-in screen rather than dropping you there with no explanation.
 
-**Notes.** The panel above the file list is a shared clipboard. Paste a link,
-press Enter, and it is on your other device — encrypted the same way files are,
-so the server holds ciphertext and two timestamps. **Copy** puts it back on the
+**Notes.** The board above the file list is a shared clipboard. Paste a link,
+press Enter, and it is on your other device within a second — Supabase Realtime
+pushes it. The text is encrypted under the same vault key the files use, so
+Postgres holds ciphertext and two timestamps. **Copy** puts it back on the
 system clipboard, which is the whole point when the alternative is emailing
 yourself a URL. Links are clickable; anything that is not `http(s)` stays inert
 text. Notes expire on the same clock as files, and the search box filters both.
@@ -173,7 +211,10 @@ Android share sheet, so you can push files back without opening it first.
   snippets, not a place to keep documents.
 - **Metadata still leaks shape:** file sizes, counts, timestamps, and IP
   addresses are visible to the server even though contents and names are not.
-- **The JS bundle is ~900 KB** (mostly the Firebase SDK). Code-splitting Auth
+- **File blobs still upload to Firebase Storage.** `src/lib/files.ts` has not
+  been moved to the Supabase `files` bucket yet, so uploads need Firebase
+  Storage enabled (Blaze) until that migration lands. Notes are unaffected.
+- **The JS bundle is ~1.1 MB** (mostly the Firebase SDK). Code-splitting Auth
   away from Firestore and Storage would help if first load ever matters.
 - **An Android home-screen widget is not possible from a PWA.** Android has no
   such API — the `widgets` manifest field targets the Windows 11 Widgets Board.
@@ -182,5 +223,5 @@ Android share sheet, so you can push files back without opening it first.
 
 ## Stack
 
-Vite · React 19 · TypeScript · Firebase (Auth, Firestore, Cloud Storage) ·
-Web Crypto · vite-plugin-pwa
+Vite · React 19 · TypeScript · Firebase (Hosting, Auth, Firestore) ·
+Supabase (Postgres, Realtime) · Web Crypto · vite-plugin-pwa

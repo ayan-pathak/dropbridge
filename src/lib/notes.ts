@@ -1,17 +1,4 @@
-import {
-  collection,
-  deleteDoc,
-  doc,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  setDoc,
-  Timestamp,
-  type Unsubscribe,
-} from 'firebase/firestore';
-
-import { db } from './firebase';
+import { supabase } from './supabase';
 import { decryptJson, encryptJson } from './crypto';
 
 const RETENTION_DAYS = Number(import.meta.env.VITE_RETENTION_DAYS ?? 7);
@@ -28,32 +15,58 @@ export interface StoredNote {
   undecryptable?: boolean;
 }
 
-const notesCol = (uid: string) => collection(db, 'users', uid, 'notes');
+interface NoteRow {
+  id: string;
+  body: string;
+  body_iv: string;
+  created_at: string;
+  expires_at: string;
+}
+
+const COLUMNS = 'id, body, body_iv, created_at, expires_at';
+
+async function decode(vaultKey: CryptoKey, rows: NoteRow[]): Promise<StoredNote[]> {
+  return Promise.all(
+    rows.map(async (row): Promise<StoredNote> => {
+      const base = {
+        id: row.id,
+        createdAt: row.created_at ? new Date(row.created_at) : null,
+        expiresAt: row.expires_at ? new Date(row.expires_at) : null,
+      };
+      try {
+        const { text } = await decryptJson<{ text: string }>(vaultKey, row.body_iv, row.body);
+        return { ...base, text };
+      } catch {
+        // Show the row rather than hide it, so a bad pairing looks like what it
+        // is instead of like data loss. Same call the file list makes.
+        return { ...base, text: '', undecryptable: true };
+      }
+    }),
+  );
+}
 
 export async function addNote(
   uid: string,
   vaultKey: CryptoKey,
   text: string,
-): Promise<string> {
+): Promise<void> {
   const trimmed = text.trim();
   if (!trimmed) throw new Error('Nothing to save.');
   if (trimmed.length > NOTE_MAX_CHARS) {
     throw new Error(`Notes are capped at ${NOTE_MAX_CHARS.toLocaleString()} characters.`);
   }
 
-  const noteId = crypto.randomUUID();
-  // The text itself is the only interesting thing here, so it goes into the
-  // encrypted blob whole. Firestore keeps two opaque strings and two dates.
+  // Encrypted here, in the browser. Postgres only ever holds the ciphertext.
   const body = await encryptJson(vaultKey, { text: trimmed });
 
-  await setDoc(doc(notesCol(uid), noteId), {
+  const { error } = await supabase.from('notes').insert({
+    user_id: uid,
     body: body.data,
-    bodyIv: body.iv,
-    createdAt: serverTimestamp(),
-    expiresAt: Timestamp.fromDate(new Date(Date.now() + RETENTION_DAYS * 86_400_000)),
+    body_iv: body.iv,
+    expires_at: new Date(Date.now() + RETENTION_DAYS * 86_400_000).toISOString(),
   });
 
-  return noteId;
+  if (error) throw new Error(error.message);
 }
 
 export function watchNotes(
@@ -61,39 +74,54 @@ export function watchNotes(
   vaultKey: CryptoKey,
   onChange: (notes: StoredNote[]) => void,
   onError?: (error: Error) => void,
-): Unsubscribe {
-  const q = query(notesCol(uid), orderBy('createdAt', 'desc'));
+): () => void {
+  let live = true;
 
-  return onSnapshot(
-    q,
-    (snap) => {
-      void Promise.all(
-        snap.docs.map(async (d): Promise<StoredNote> => {
-          const data = d.data();
-          const base = {
-            id: d.id,
-            createdAt: (data.createdAt as Timestamp | null)?.toDate() ?? null,
-            expiresAt: (data.expiresAt as Timestamp | null)?.toDate() ?? null,
-          };
-          try {
-            const { text } = await decryptJson<{ text: string }>(
-              vaultKey,
-              data.bodyIv as string,
-              data.body as string,
-            );
-            return { ...base, text };
-          } catch {
-            // Same call as files: show the row rather than hide it, so a bad
-            // pairing looks like what it is instead of like data loss.
-            return { ...base, text: '', undecryptable: true };
-          }
-        }),
-      ).then(onChange);
-    },
-    (error) => onError?.(error),
-  );
+  async function refresh() {
+    const { data, error } = await supabase
+      .from('notes')
+      .select(COLUMNS)
+      .eq('user_id', uid)
+      .gt('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false });
+
+    if (!live) return;
+    if (error) {
+      onError?.(new Error(error.message));
+      return;
+    }
+    onChange(await decode(vaultKey, (data ?? []) as NoteRow[]));
+  }
+
+  // Postgres has no TTL policy, so expiry is swept here. RLS scopes the delete
+  // to this user, and the query above hides anything the sweep hasn't caught.
+  void supabase
+    .from('notes')
+    .delete()
+    .eq('user_id', uid)
+    .lt('expires_at', new Date().toISOString())
+    .then(() => undefined);
+
+  void refresh();
+
+  // Realtime is what makes the other device light up; it replaces Firestore's
+  // onSnapshot. Refetching on any change keeps decryption in exactly one place.
+  const channel = supabase
+    .channel(`notes:${uid}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'notes', filter: `user_id=eq.${uid}` },
+      () => void refresh(),
+    )
+    .subscribe();
+
+  return () => {
+    live = false;
+    void supabase.removeChannel(channel);
+  };
 }
 
 export async function deleteNote(uid: string, noteId: string): Promise<void> {
-  await deleteDoc(doc(notesCol(uid), noteId));
+  const { error } = await supabase.from('notes').delete().eq('id', noteId).eq('user_id', uid);
+  if (error) throw new Error(error.message);
 }

@@ -115,7 +115,7 @@ export default function Notes({
       ) : (
         <div className="notes">
           {notes.map((note) => (
-            <div className="note" key={note.id} data-locked={note.undecryptable ?? false}>
+            <article className="note" key={note.id} data-locked={note.undecryptable ?? false}>
               <div className="note-body">
                 {note.undecryptable ? (
                   <span className="micro">Encrypted with a different key</span>
@@ -124,7 +124,7 @@ export default function Notes({
                 )}
               </div>
 
-              <div className="note-side">
+              <footer className="note-foot">
                 <span className="micro">{formatRelative(note.createdAt)}</span>
                 <div className="row">
                   {!note.undecryptable && (
@@ -136,8 +136,8 @@ export default function Notes({
                     Delete
                   </button>
                 </div>
-              </div>
-            </div>
+              </footer>
+            </article>
           ))}
         </div>
       )}
