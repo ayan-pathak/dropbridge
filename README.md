@@ -15,15 +15,19 @@ life is the wrong tool for "get this PDF onto my phone."
 ```
 Phone PWA                            Desktop web app
     │                                       │
-    ├──────────► Firebase (GCP) ◄───────────┤
-    │            Hosting · Auth · Firestore │
+    ├──────────► Firebase ◄─────────────────┤
+    │            Auth · Firestore           │
     │                                       │
-    └──────────►   Supabase    ◄────────────┘
-                 Postgres (notes) · Storage
+    └──────────► Supabase ◄─────────────────┘
+                 Storage · Postgres (notes)
 
-Firebase proves who you are.  Supabase and Firestore hold
-nothing but ciphertext.  The key never leaves your devices.
+Firestore holds opaque metadata.  Supabase holds ciphertext,
+both the file bytes and the notes.  The key never leaves
+your devices.
 ```
+
+Supabase authorises against the *Firebase* ID token via its third-party auth
+integration, so there is one login and no second account to manage.
 
 - **AES-GCM 256** encryption in the browser before upload. Firebase stores
   ciphertext and an opaque blob of encrypted metadata.
@@ -59,52 +63,39 @@ In the [Firebase console](https://console.firebase.google.com):
      Hosting domain is listed. Sign-in fails with `auth/unauthorized-domain`
      from anywhere that is not.
 2. **Firestore Database → Create database →** *Production mode*
-3. **Storage → Get started** — requires the **Blaze** plan. Any project created
-   after 30 Oct 2024 must have a linked billing account to provision a bucket at
-   all; since 3 Feb 2026 that applies to maintaining one too. Free-tier
-   allowances still apply, so real-world cost here is ~$0.
-4. **Project settings → General → Your apps → Add app → Web**, and copy the
+3. **Project settings → General → Your apps → Add app → Web**, and copy the
    config values.
 
-### 2. Supabase (notes)
+Firebase Storage is deliberately unused — it requires the Blaze plan, and
+Supabase's free tier covers this app's needs without a billing account.
 
-Notes live in Postgres, reached with your **Firebase** identity — there is no
-second login.
+### 1b. Supabase (storage and notes)
 
-1. **Authentication → Third-Party Auth →** add an integration pointing at your
-   Firebase project ID.
-2. Apply the schema in `supabase/migrations/` (or run it in the SQL editor). It
-   creates `public.notes`, its RLS policies, and adds the table to the
-   `supabase_realtime` publication — realtime is what makes the other device
-   light up.
-3. Give your Firebase user the `role: 'authenticated'` custom claim. This is
-   not settable from the browser; see **Custom claims** below.
-4. **Project settings → Data API →** copy the URL and publishable key into
-   `.env`.
+1. Create a project at [supabase.com](https://supabase.com) — no card required.
+2. **Storage → New bucket** → name it `files`, leave it **private**.
+3. **Authentication → Sign In / Providers → Third-Party Auth** → add **Firebase**
+   and enter your Firebase project ID.
+4. **SQL Editor** → run `supabase-policies.sql`, then run
+   `supabase/migrations/20260817000000_create_notes_table.sql`. The first
+   authorises the bucket; the second creates the notes table, its policies, and
+   adds it to the `supabase_realtime` publication — realtime is what makes a
+   note appear on the other device.
+5. **Project Settings → API** → copy the URL and anon key into `.env`.
 
-The RLS policies read `auth.jwt() ->> 'sub'`, **not** `auth.uid()`. Firebase
-uids are 28-character strings and `auth.uid()` casts to `uuid`, so the usual
-example would fail every query with `invalid input syntax for type uuid`.
+The policies pin `aud` to your Firebase project ID for a reason: **Firebase
+signs every project's JWTs with the same global key set**, so without that check
+a token from any unrelated Firebase project would authorise against your data.
 
-#### Custom claims
+They also read `auth.jwt() ->> 'sub'` rather than `auth.uid()`, and target
+`anon` as well as `authenticated`. Firebase tokens carry no `role` claim, so
+requests arrive as `anon`; and `auth.uid()` casts to `uuid`, which a 28-char
+Firebase uid is not — it fails with `invalid input syntax for type uuid`.
 
-Supabase maps a JWT to the `authenticated` Postgres role via its `role` claim,
-and Firebase does not set one. Without it every request arrives as `anon` and
-RLS rejects it. Set it once per user with the Admin SDK and a service account
-key:
+Free tier is 1 GB of storage and 5 GB egress per month. Projects also **pause
+after 7 days of inactivity** and need a manual restore — invisible for daily
+use, annoying after a holiday.
 
-Grab a service account key (**Project settings → Service accounts → Generate
-new private key**), then:
-
-```bash
-npx --yes -p firebase-admin node tools/set-auth-claim.mjs <key.json> you@example.com
-```
-
-That key is a credential with full admin rights — keep it out of the repo and
-delete it when you are done. The claim reaches the client when the ID token next
-refreshes: within the hour, or immediately if you sign out and back in.
-
-### 3. Guard the bill
+### 2. Guard the bill
 
 Blaze has no hard spending cap — budgets *alert*, they do not stop. Do both of
 these before you deploy:
@@ -153,19 +144,35 @@ Firebase Hosting serves it over HTTPS on a real certificate, which is what makes
 the PWA installable — a self-signed cert on a LAN address will not work, because
 service workers refuse to register outside a secure context.
 
-### 7. Auto-delete (do this, or files live forever)
+### 6. Auto-delete
 
-Two independent reapers, because Firestore and Storage expire separately:
+A file has two possible lifetimes, whichever comes first:
 
-- **Firestore TTL:** Cloud console → Firestore → Time-to-live → add a policy on
-  collection group `files`, field `expiresAt`.
-- **Notes** need no setup: Postgres has no TTL, so the app sweeps its own
-  expired rows on load and filters the rest out of the query.
-- **Storage lifecycle:** Cloud console → Cloud Storage → your bucket →
-  Lifecycle → add rule: *delete object, age 8 days*.
+- **Undelivered:** `VITE_RETENTION_DAYS`, default 7 days.
+- **Delivered:** `VITE_DELETE_AFTER_DOWNLOAD_MINUTES`, default 30 minutes,
+  starting the moment a *different* device downloads it. Re-downloading on the
+  device that uploaded it doesn't count — that isn't delivery. Files marked
+  **Keep** are exempt from both.
 
-Keep the storage rule slightly **longer** than `VITE_RETENTION_DAYS`, so blobs
-never vanish out from under metadata that still lists them.
+Notes need no setup at all: Postgres has no TTL policy, so the app sweeps its
+own expired rows on load and filters the rest out of the query.
+
+A deadline can only ever move closer, never further out, so a later download by
+a third device can't extend the life of something already on its way out.
+
+**Enforcement is client-side.** The app sweeps on open and every 60 seconds
+while running. There is no server in this architecture, so "30 minutes" is a
+floor, not a ceiling: if no device opens the app for two days, deletion happens
+two days later. The bytes stay encrypted throughout, so the exposure is quota
+and retention, not confidentiality.
+
+Add **Firestore TTL** as a backstop for the metadata: Cloud console → Firestore
+→ Time-to-live → policy on collection group `files`, field `expiresAt`. Note it
+only reaps Firestore documents, not the Supabase objects, and Google's TTL
+sweep runs within ~24h of expiry rather than promptly.
+
+If you later want deletion that happens whether or not the app is open,
+Supabase's `pg_cron` plus an Edge Function can do it on the free tier.
 
 ---
 
@@ -207,17 +214,15 @@ Android share sheet, so you can push files back without opening it first.
 
 ## Notes and limits
 
-- **Files are encrypted whole, in memory.** The 200 MB cap in `storage.rules` is
-  a real client constraint, not just a billing guard. Raising it needs chunked
-  encryption first.
-- **Notes are capped at 8,000 characters**, enforced in the client and again in
-  `firestore.rules` against the ciphertext length. It is a relay for links and
+- **Files are encrypted whole, in memory**, so very large files are a bad idea
+  regardless of what storage allows. The Supabase bucket also defaults to a
+  **50 MB per-file limit** (Storage → bucket → Settings). Raising either needs
+  chunked encryption first.
+- **Notes are capped at 8,000 characters**, enforced in the client and again as
+  a Postgres check constraint on the ciphertext. It is a relay for links and
   snippets, not a place to keep documents.
 - **Metadata still leaks shape:** file sizes, counts, timestamps, and IP
   addresses are visible to the server even though contents and names are not.
-- **File blobs still upload to Firebase Storage.** `src/lib/files.ts` has not
-  been moved to the Supabase `files` bucket yet, so uploads need Firebase
-  Storage enabled (Blaze) until that migration lands. Notes are unaffected.
 - **The JS bundle is ~1.1 MB** (mostly the Firebase SDK). Code-splitting Auth
   away from Firestore and Storage would help if first load ever matters.
 - **An Android home-screen widget is not possible from a PWA.** Android has no

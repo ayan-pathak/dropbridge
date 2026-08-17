@@ -7,6 +7,7 @@
 const DB_NAME = 'dropbridge';
 const STORE = 'keys';
 const VAULT_KEY_ID = 'vault';
+const DEVICE_ID = 'deviceId';
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -43,4 +44,21 @@ export async function saveVaultKey(key: CryptoKey): Promise<void> {
 
 export async function clearVaultKey(): Promise<void> {
   await tx('readwrite', (store) => store.delete(VAULT_KEY_ID));
+}
+
+/**
+ * A random, stable identifier for this browser profile. Used only to tell
+ * "the device that uploaded" from "a device that downloaded", so that files
+ * can self-destruct once they have actually reached the other end.
+ *
+ * Opaque and unlinked to the account — it reveals nothing to the server beyond
+ * the fact that two events came from the same place.
+ */
+export async function getDeviceId(): Promise<string> {
+  const existing = await tx<string | undefined>('readonly', (store) => store.get(DEVICE_ID));
+  if (existing) return existing;
+
+  const id = crypto.randomUUID();
+  await tx('readwrite', (store) => store.put(id, DEVICE_ID));
+  return id;
 }

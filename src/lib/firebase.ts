@@ -6,7 +6,6 @@ import {
   persistentLocalCache,
   persistentMultipleTabManager,
 } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
 
 function required(name: string): string {
   const value = import.meta.env[name as keyof ImportMetaEnv] as string | undefined;
@@ -45,4 +44,4 @@ export const db = initializeFirestore(app, {
   localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
 });
 
-export const storage = getStorage(app);
+// File bytes live in Supabase Storage, not here — see lib/supabase.ts.

@@ -37,9 +37,10 @@ export default function VaultGate({
   }
 
   return (
-    <div className="center-stage">
+    <>
       <Scatter />
-      <span className="pill">This device has no key yet</span>
+      <div className="center-stage">
+        <span className="pill">This device has no key yet</span>
 
       <h1 className="display">Open the vault</h1>
 
@@ -57,12 +58,13 @@ export default function VaultGate({
         </button>
       </div>
 
-      {hasExistingFiles && (
-        <p className="micro" style={{ maxWidth: '28rem', color: 'var(--danger)' }}>
-          You already have files stored. Starting a new vault will leave them
-          permanently unreadable — pair instead unless that is what you want.
-        </p>
-      )}
-    </div>
+        {hasExistingFiles && (
+          <p className="micro" style={{ maxWidth: '28rem', color: 'var(--danger)' }}>
+            You already have files stored. Starting a new vault will leave them
+            permanently unreadable — pair instead unless that is what you want.
+          </p>
+        )}
+      </div>
+    </>
   );
 }
