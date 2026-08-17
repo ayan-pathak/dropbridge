@@ -93,12 +93,16 @@ and Firebase does not set one. Without it every request arrives as `anon` and
 RLS rejects it. Set it once per user with the Admin SDK and a service account
 key:
 
-```js
-import { getAuth } from 'firebase-admin/auth';
-await getAuth().setCustomUserClaims(uid, { role: 'authenticated' });
+Grab a service account key (**Project settings → Service accounts → Generate
+new private key**), then:
+
+```bash
+npx --yes -p firebase-admin node tools/set-auth-claim.mjs <key.json> you@example.com
 ```
 
-The token refreshes within the hour, or immediately on the next sign-in.
+That key is a credential with full admin rights — keep it out of the repo and
+delete it when you are done. The claim reaches the client when the ID token next
+refreshes: within the hour, or immediately if you sign out and back in.
 
 ### 3. Guard the bill
 
