@@ -117,7 +117,9 @@ service workers refuse to register outside a secure context.
 Two independent reapers, because Firestore and Storage expire separately:
 
 - **Firestore TTL:** Cloud console → Firestore → Time-to-live → add a policy on
-  collection group `files`, field `expiresAt`.
+  collection group `files`, field `expiresAt`, and a **second** policy on
+  collection group `notes`, same field. TTL policies are per collection group,
+  so the one on `files` does nothing for notes — miss it and notes never expire.
 - **Storage lifecycle:** Cloud console → Cloud Storage → your bucket →
   Lifecycle → add rule: *delete object, age 8 days*.
 
@@ -145,6 +147,13 @@ If the laptop blocks popups, Google sign-in falls back to a full-page redirect o
 its own. Should the redirect itself fail, the reason now comes back to the
 sign-in screen rather than dropping you there with no explanation.
 
+**Notes.** The panel above the file list is a shared clipboard. Paste a link,
+press Enter, and it is on your other device — encrypted the same way files are,
+so the server holds ciphertext and two timestamps. **Copy** puts it back on the
+system clipboard, which is the whole point when the alternative is emailing
+yourself a URL. Links are clickable; anything that is not `http(s)` stays inert
+text. Notes expire on the same clock as files, and the search box filters both.
+
 **Floating drop target.** On desktop Chrome or Edge, hit **Pop out**. That's a
 Document Picture-in-Picture window: a real always-on-top OS window rendering the
 drop zone. Drag files onto it from anywhere.
@@ -159,6 +168,9 @@ Android share sheet, so you can push files back without opening it first.
 - **Files are encrypted whole, in memory.** The 200 MB cap in `storage.rules` is
   a real client constraint, not just a billing guard. Raising it needs chunked
   encryption first.
+- **Notes are capped at 8,000 characters**, enforced in the client and again in
+  `firestore.rules` against the ciphertext length. It is a relay for links and
+  snippets, not a place to keep documents.
 - **Metadata still leaks shape:** file sizes, counts, timestamps, and IP
   addresses are visible to the server even though contents and names are not.
 - **The JS bundle is ~900 KB** (mostly the Firebase SDK). Code-splitting Auth

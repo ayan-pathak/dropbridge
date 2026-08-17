@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { signOut, type User } from 'firebase/auth';
 
 import { auth } from './lib/firebase';
-import { useAuth, useFiles, useVaultKey } from './hooks';
+import { useAuth, useFiles, useNotes, useVaultKey } from './hooks';
 import { isPipSupported, openPipWindow } from './lib/pip';
 import { takeSharedFiles } from './lib/sharedInbox';
 import { uploadFile } from './lib/files';
@@ -12,6 +12,7 @@ import AuthGate from './components/AuthGate';
 import VaultGate from './components/VaultGate';
 import DropZone from './components/DropZone';
 import FileList from './components/FileList';
+import Notes from './components/Notes';
 import { PairApprove } from './components/PairPanel';
 
 function Splash() {
@@ -24,6 +25,7 @@ function Splash() {
 
 function Workspace({ user, vaultKey }: { user: User; vaultKey: CryptoKey }) {
   const { files, error } = useFiles(user.uid, vaultKey);
+  const { notes, error: notesError } = useNotes(user.uid, vaultKey);
   const [search, setSearch] = useState('');
   const [pairing, setPairing] = useState(false);
   const [pipWindow, setPipWindow] = useState<Window | null>(null);
@@ -48,6 +50,14 @@ function Workspace({ user, vaultKey }: { user: User; vaultKey: CryptoKey }) {
     if (!term) return files;
     return files.filter((file) => file.meta.name.toLowerCase().includes(term));
   }, [files, search]);
+
+  // The one search box covers both halves; a term that hides every file while
+  // silently leaving the notes list full would just read as a bug.
+  const visibleNotes = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return notes;
+    return notes.filter((note) => note.text.toLowerCase().includes(term));
+  }, [notes, search]);
 
   async function popOut() {
     try {
@@ -97,6 +107,18 @@ function Workspace({ user, vaultKey }: { user: User; vaultKey: CryptoKey }) {
             {notice}
           </p>
         )}
+
+        <hr className="divider" />
+
+        <div className="spread" style={{ marginBottom: '1rem' }}>
+          <h2 className="title">Notes</h2>
+          <span className="micro">
+            {visibleNotes.length} note{visibleNotes.length === 1 ? '' : 's'}
+          </span>
+        </div>
+
+        {notesError && <p className="error">{notesError}</p>}
+        <Notes uid={user.uid} vaultKey={vaultKey} notes={visibleNotes} />
 
         <hr className="divider" />
 

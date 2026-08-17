@@ -6,6 +6,7 @@ import { describeAuthError } from './lib/authError';
 import { generateVaultKey } from './lib/crypto';
 import { clearVaultKey, loadVaultKey, saveVaultKey } from './lib/keystore';
 import { watchFiles, type StoredFile } from './lib/files';
+import { watchNotes, type StoredNote } from './lib/notes';
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
@@ -100,4 +101,20 @@ export function useFiles(uid: string | null, vaultKey: CryptoKey | null) {
   }, [uid, vaultKey]);
 
   return { files, error };
+}
+
+export function useNotes(uid: string | null, vaultKey: CryptoKey | null) {
+  const [notes, setNotes] = useState<StoredNote[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!uid || !vaultKey) {
+      setNotes([]);
+      return;
+    }
+    setError(null);
+    return watchNotes(uid, vaultKey, setNotes, (err) => setError(err.message));
+  }, [uid, vaultKey]);
+
+  return { notes, error };
 }
