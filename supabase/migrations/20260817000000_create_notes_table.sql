@@ -60,6 +60,11 @@ using (
 -- edited in place. Rewriting ciphertext under an existing IV would break
 -- AES-GCM's guarantees, so the database refuses it outright.
 
+-- Realtime evaluates a postgres_changes filter against the OLD row on DELETE.
+-- With the default replica identity that row is only the primary key, so a
+-- filter on user_id never matches and deletes never reach the other device.
+alter table public.notes replica identity full;
+
 -- Cross-device sync: this is what replaces Firestore's onSnapshot.
 -- Guarded so the whole script stays re-runnable, same as supabase-policies.sql.
 do $$

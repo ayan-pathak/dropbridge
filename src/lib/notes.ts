@@ -1,3 +1,5 @@
+import type { RealtimeChannel } from '@supabase/supabase-js';
+
 import { supabase } from './supabase';
 import { decryptJson, encryptJson } from './crypto';
 
@@ -104,20 +106,45 @@ export function watchNotes(
 
   void refresh();
 
-  // Realtime is what makes the other device light up; it replaces Firestore's
-  // onSnapshot. Refetching on any change keeps decryption in exactly one place.
-  const channel = supabase
-    .channel(`notes:${uid}`)
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'notes', filter: `user_id=eq.${uid}` },
-      () => void refresh(),
-    )
-    .subscribe();
+  let channel: RealtimeChannel | null = null;
+
+  void (async () => {
+    // supabase-js resolves the accessToken callback exactly once, when the
+    // client is constructed -- which is at import time, before Firebase has
+    // restored the session. The socket therefore starts with a null token,
+    // RLS drops every change event, and the board only updates on reload.
+    //
+    // Calling setAuth() with no argument re-runs that same callback, so it
+    // picks up the now-present Firebase token and stays in callback mode --
+    // meaning it keeps refreshing itself on heartbeat as the token rotates.
+    try {
+      await supabase.realtime.setAuth();
+    } catch (err) {
+      onError?.(err instanceof Error ? err : new Error(String(err)));
+    }
+    if (!live) return;
+
+    // Realtime is what makes the other device light up; it replaces Firestore's
+    // onSnapshot. Refetching on any change keeps decryption in one place.
+    channel = supabase
+      .channel(`notes:${uid}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'notes', filter: `user_id=eq.${uid}` },
+        () => void refresh(),
+      )
+      .subscribe((status) => {
+        // Silence here is the failure mode that cost the most time, so a socket
+        // that cannot subscribe should say so rather than look merely idle.
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          onError?.(new Error(`Live sync unavailable (${status}). Notes will still load on refresh.`));
+        }
+      });
+  })();
 
   return () => {
     live = false;
-    void supabase.removeChannel(channel);
+    if (channel) void supabase.removeChannel(channel);
   };
 }
 
