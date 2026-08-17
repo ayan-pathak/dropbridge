@@ -19,10 +19,11 @@ Phone PWA                            Desktop web app
     │            Auth · Firestore           │
     │                                       │
     └──────────► Supabase ◄─────────────────┘
-                 Storage
+                 Storage · Postgres (notes)
 
-Firestore holds opaque metadata.  Supabase holds ciphertext.
-The key never leaves your devices.
+Firestore holds opaque metadata.  Supabase holds ciphertext,
+both the file bytes and the notes.  The key never leaves
+your devices.
 ```
 
 Supabase authorises against the *Firebase* ID token via its third-party auth
@@ -54,7 +55,13 @@ break that app.
 
 In the [Firebase console](https://console.firebase.google.com):
 
-1. **Authentication → Sign-in method →** enable **Email/Password**
+1. **Authentication → Sign-in method →** enable **Google** *and*
+   **Email/Password**. Both, not either: Google is the fast path, and the
+   password is the way in on a laptop that blocks personal Google accounts in
+   the browser.
+   - Under **Authentication → Settings → Authorized domains**, confirm your
+     Hosting domain is listed. Sign-in fails with `auth/unauthorized-domain`
+     from anywhere that is not.
 2. **Firestore Database → Create database →** *Production mode*
 3. **Project settings → General → Your apps → Add app → Web**, and copy the
    config values.
@@ -62,18 +69,27 @@ In the [Firebase console](https://console.firebase.google.com):
 Firebase Storage is deliberately unused — it requires the Blaze plan, and
 Supabase's free tier covers this app's needs without a billing account.
 
-### 1b. Supabase storage
+### 1b. Supabase (storage and notes)
 
 1. Create a project at [supabase.com](https://supabase.com) — no card required.
 2. **Storage → New bucket** → name it `files`, leave it **private**.
 3. **Authentication → Sign In / Providers → Third-Party Auth** → add **Firebase**
    and enter your Firebase project ID.
-4. **SQL Editor** → paste `supabase-policies.sql` → Run.
+4. **SQL Editor** → run `supabase-policies.sql`, then run
+   `supabase/migrations/20260817000000_create_notes_table.sql`. The first
+   authorises the bucket; the second creates the notes table, its policies, and
+   adds it to the `supabase_realtime` publication — realtime is what makes a
+   note appear on the other device.
 5. **Project Settings → API** → copy the URL and anon key into `.env`.
 
 The policies pin `aud` to your Firebase project ID for a reason: **Firebase
 signs every project's JWTs with the same global key set**, so without that check
-a token from any unrelated Firebase project would authorise against your bucket.
+a token from any unrelated Firebase project would authorise against your data.
+
+They also read `auth.jwt() ->> 'sub'` rather than `auth.uid()`, and target
+`anon` as well as `authenticated`. Firebase tokens carry no `role` claim, so
+requests arrive as `anon`; and `auth.uid()` casts to `uuid`, which a 28-char
+Firebase uid is not — it fails with `invalid input syntax for type uuid`.
 
 Free tier is 1 GB of storage and 5 GB egress per month. Projects also **pause
 after 7 days of inactivity** and need a manual restore — invisible for daily
@@ -89,7 +105,7 @@ these before you deploy:
   then put the site key in `.env`. This is what stops anyone who finds your
   (inherently public) web API key from spending your money.
 
-### 3. Local
+### 4. Local
 
 ```bash
 cp .env.example .env
@@ -105,12 +121,12 @@ npm install
 npm run dev
 ```
 
-### 4. Icons
+### 5. Icons
 
 The manifest needs two PNGs that aren't in the repo. Open `tools/make-icons.html`
 in a browser, click the button, and save both files into `public/icons/`.
 
-### 5. Deploy
+### 6. Deploy
 
 ```bash
 npx firebase login
@@ -138,6 +154,9 @@ A file has two possible lifetimes, whichever comes first:
   device that uploaded it doesn't count — that isn't delivery. Files marked
   **Keep** are exempt from both.
 
+Notes need no setup at all: Postgres has no TTL policy, so the app sweeps its
+own expired rows on load and filters the rest out of the query.
+
 A deadline can only ever move closer, never further out, so a later download by
 a third device can't extend the life of something already on its way out.
 
@@ -159,12 +178,30 @@ Supabase's `pg_cron` plus an Edge Function can do it on the free tier.
 
 ## Using it
 
-**First device.** Sign up (do this on your phone — verification goes to your
-inbox), then choose **Start a new vault**.
+**First device.** Sign up on your phone — **Continue with Google**, or an email
+and password if you would rather not (verification goes to your inbox). Then
+choose **Start a new vault**.
 
-**Second device.** Sign in with the same email and password — no inbox access
-needed, which is the point on a work laptop. Choose **Pair with another device**,
-then on the phone tap **Add a device** and scan the QR.
+**Set a password too.** Whichever way you signed up, add a password to the
+account before you go near the laptop. Managed machines routinely block signing
+a personal Google account into the browser, and the password is what gets you in
+when they do — that is the whole reason both methods exist here.
+
+**Second device.** Sign in as the same account — no inbox access needed, which is
+the point on a work laptop. Choose **Pair with another device**, then on the
+phone tap **Add a device** and scan the QR.
+
+If the laptop blocks popups, Google sign-in falls back to a full-page redirect on
+its own. Should the redirect itself fail, the reason now comes back to the
+sign-in screen rather than dropping you there with no explanation.
+
+**Notes.** The board above the file list is a shared clipboard. Paste a link,
+press Enter, and it is on your other device within a second — Supabase Realtime
+pushes it. The text is encrypted under the same vault key the files use, so
+Postgres holds ciphertext and two timestamps. **Copy** puts it back on the
+system clipboard, which is the whole point when the alternative is emailing
+yourself a URL. Links are clickable; anything that is not `http(s)` stays inert
+text. Notes expire on the same clock as files, and the search box filters both.
 
 **Floating drop target.** On desktop Chrome or Edge, hit **Pop out**. That's a
 Document Picture-in-Picture window: a real always-on-top OS window rendering the
@@ -181,9 +218,12 @@ Android share sheet, so you can push files back without opening it first.
   regardless of what storage allows. The Supabase bucket also defaults to a
   **50 MB per-file limit** (Storage → bucket → Settings). Raising either needs
   chunked encryption first.
+- **Notes are capped at 8,000 characters**, enforced in the client and again as
+  a Postgres check constraint on the ciphertext. It is a relay for links and
+  snippets, not a place to keep documents.
 - **Metadata still leaks shape:** file sizes, counts, timestamps, and IP
   addresses are visible to the server even though contents and names are not.
-- **The JS bundle is ~900 KB** (mostly the Firebase SDK). Code-splitting Auth
+- **The JS bundle is ~1.1 MB** (mostly the Firebase SDK). Code-splitting Auth
   away from Firestore and Storage would help if first load ever matters.
 - **An Android home-screen widget is not possible from a PWA.** Android has no
   such API — the `widgets` manifest field targets the Windows 11 Widgets Board.
@@ -192,5 +232,5 @@ Android share sheet, so you can push files back without opening it first.
 
 ## Stack
 
-Vite · React 19 · TypeScript · Firebase (Auth, Firestore, Cloud Storage) ·
-Web Crypto · vite-plugin-pwa
+Vite · React 19 · TypeScript · Firebase (Hosting, Auth, Firestore) ·
+Supabase (Postgres, Realtime) · Web Crypto · vite-plugin-pwa
