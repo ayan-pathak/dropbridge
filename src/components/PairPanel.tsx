@@ -9,6 +9,7 @@ import {
   respondToOffer,
   type PairingOffer,
 } from '../lib/pairing';
+import { describeCameraError, startQrScan, type QrScanHandle } from '../lib/qrScanner';
 
 const pairingDoc = (uid: string, id: string) => doc(db, 'users', uid, 'pairings', id);
 
@@ -24,6 +25,8 @@ export function PairRequest({
   onPaired: (key: CryptoKey) => void;
 }) {
   const [qr, setQr] = useState<string | null>(null);
+  const [payload, setPayload] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -40,8 +43,10 @@ export function PairRequest({
         });
 
         if (cancelled) return;
+        const encoded = JSON.stringify(offer);
+        setPayload(encoded);
         setQr(
-          await QRCode.toDataURL(JSON.stringify(offer), {
+          await QRCode.toDataURL(encoded, {
             margin: 1,
             width: 280,
             errorCorrectionLevel: 'L',
@@ -103,6 +108,40 @@ export function PairRequest({
         )}
       </div>
 
+      {/* The other device may not be able to scan — an iPhone with the camera
+          blocked, say — and then this code is the only way through. */}
+      <button
+        className="btn btn-quiet btn-sm"
+        disabled={!payload}
+        onClick={() => {
+          if (!payload) return;
+          void navigator.clipboard
+            .writeText(payload)
+            .then(() => {
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1500);
+            })
+            .catch(() => setError('Could not reach the clipboard. Select the code below instead.'));
+        }}
+      >
+        {copied ? 'Code copied' : "Can't scan? Copy the code"}
+      </button>
+
+      {copied && payload && (
+        <textarea
+          className="input"
+          readOnly
+          value={payload}
+          onFocus={(e) => e.currentTarget.select()}
+          style={{
+            borderRadius: 'var(--radius-sm)',
+            minHeight: '4.5rem',
+            fontFamily: 'monospace',
+            fontSize: '0.7rem',
+          }}
+        />
+      )}
+
       <p className="micro" style={{ maxWidth: '26rem' }}>
         The key travels between the two screens, not through the server. That gap
         of air is what stops anyone in the middle from substituting their own key.
@@ -129,7 +168,8 @@ export function PairApprove({
   const [manual, setManual] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [canScan, setCanScan] = useState(true);
+  const [mode, setMode] = useState<'camera' | 'manual'>('camera');
+  const [cameraError, setCameraError] = useState<string | null>(null);
 
   async function approve(raw: string) {
     setStatus('Wrapping key…');
@@ -146,84 +186,63 @@ export function PairApprove({
   }
 
   useEffect(() => {
-    // BarcodeDetector ships in Chrome on Android, which is where this flow
-    // actually runs. Everywhere else falls back to pasting the payload.
-    const Detector = (window as unknown as { BarcodeDetector?: new (o: unknown) => {
-      detect(source: CanvasImageSource): Promise<{ rawValue: string }[]>;
-    } }).BarcodeDetector;
+    if (mode !== 'camera') return;
 
-    if (!Detector || !navigator.mediaDevices?.getUserMedia) {
-      setCanScan(false);
-      return;
-    }
-
-    let stream: MediaStream | undefined;
-    let raf = 0;
-    let stopped = false;
-    const detector = new Detector({ formats: ['qr_code'] });
+    let handle: QrScanHandle | null = null;
+    let cancelled = false;
 
     void (async () => {
+      const video = videoRef.current;
+      if (!video) return;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' },
-        });
-        if (stopped || !videoRef.current) return;
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-
-        const tick = async () => {
-          if (stopped || !videoRef.current) return;
-          try {
-            const [hit] = await detector.detect(videoRef.current);
-            if (hit) {
-              stopped = true;
-              await approve(hit.rawValue);
-              return;
-            }
-          } catch {
-            // A dropped frame is not worth aborting the scan loop over.
-          }
-          raf = requestAnimationFrame(() => void tick());
-        };
-        void tick();
-      } catch {
-        setCanScan(false);
+        handle = await startQrScan(video, (value) => void approve(value));
+        // The panel can close while the permission prompt is still up.
+        if (cancelled) handle.stop();
+      } catch (err) {
+        if (cancelled) return;
+        setCameraError(describeCameraError(err));
+        setMode('manual');
       }
     })();
 
     return () => {
-      stopped = true;
-      cancelAnimationFrame(raf);
-      stream?.getTracks().forEach((track) => track.stop());
+      cancelled = true;
+      handle?.stop();
     };
     // approve closes over stable props only; re-running would restart the camera.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uid, vaultKey]);
+  }, [mode, uid, vaultKey]);
 
   return (
     <div className="stack" style={{ alignItems: 'center', textAlign: 'center' }}>
       <h2 className="title">Add a device</h2>
 
-      {canScan ? (
+      {mode === 'camera' ? (
         <>
           <p className="sub">Point the camera at the QR on your other screen.</p>
           <video
             ref={videoRef}
             playsInline
             muted
+            autoPlay
             style={{
               width: 'min(20rem, 100%)',
+              aspectRatio: '1 / 1',
+              objectFit: 'cover',
               borderRadius: 'var(--radius-card)',
               border: '1px solid var(--border)',
               background: '#000',
             }}
           />
+          <button className="btn btn-quiet btn-sm" onClick={() => setMode('manual')}>
+            Enter the code instead
+          </button>
         </>
       ) : (
         <>
           <p className="sub" style={{ maxWidth: '26rem' }}>
-            No camera scanning here. Copy the pairing code from the other device
-            and paste it below.
+            {cameraError ??
+              'On the other device tap "Can\'t scan? Copy the code", then paste it here.'}
           </p>
           <textarea
             className="input"
@@ -238,6 +257,15 @@ export function PairApprove({
             onClick={() => void approve(manual.trim())}
           >
             Approve device
+          </button>
+          <button
+            className="btn btn-quiet btn-sm"
+            onClick={() => {
+              setCameraError(null);
+              setMode('camera');
+            }}
+          >
+            Try the camera
           </button>
         </>
       )}

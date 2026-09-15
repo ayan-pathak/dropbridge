@@ -189,7 +189,14 @@ when they do — that is the whole reason both methods exist here.
 
 **Second device.** Sign in as the same account — no inbox access needed, which is
 the point on a work laptop. Choose **Pair with another device**, then on the
-phone tap **Add a device** and scan the QR.
+phone tap **Add a device** and scan the QR. Scanning works on iPhone and
+Android alike: Chromium's `BarcodeDetector` is used where it exists, and
+everywhere else a decoder is fetched on demand.
+
+If the camera is unavailable — blocked in Settings, already in use, or the page
+is on plain http where Safari refuses it — the panel says which, and falls back
+to pasting the code that the other device offers under **Can't scan? Copy the
+code**.
 
 If the laptop blocks popups, Google sign-in falls back to a full-page redirect on
 its own. Should the redirect itself fail, the reason now comes back to the
